@@ -110,3 +110,143 @@ def register_file_tools(mcp: FastMCP, sandbox_root: Path):
             return f"File deleted: {path}"
         except Exception as e:
             return f"Error deleting file: {str(e)}"
+        
+    @mcp.tool() # Rename File Tool
+    async def rename_file(old_path:str , new_path:str) ->str:
+        """
+        Rename a file or directory inside the sandbox.
+
+        Args:
+            old_path: Current path of the file or directory.
+            new_path: New desired path.
+        """
+        old_path_target = safe_join(SANDBOX, old_path)
+        new_path_target = safe_join(SANDBOX, new_path)
+
+        if not old_path_target.exists():
+            return f"Error: '{old_path}' does not exist."
+        if new_path_target.exists() and new_path_target.is_dir():
+            return f"Error: Cannot overwrite an existing directory: {new_path}"
+        
+        try:
+            new_path_target.parent.mkdir(parents=True, exist_ok=True)
+        except Exception as e:
+            return f"Error creating parent directories: {str(e)}"
+        
+        try :
+            old_path_target.rename(new_path_target)
+            return f"Successfully renamed '{old_path}' to '{new_path}'."
+        except Exception as e:
+            return f"Error renaming file or directory: {str(e)}"
+        
+    @mcp.tool() # Move Tool
+    async def move_file(source_path: str, dest_path: str) -> str:
+        """
+        Move a file or directory within the sandbox.
+
+        Args:
+            source_path: Current path of the file or directory.
+            dest_path: Destination path.
+        """
+        source = safe_join(SANDBOX, source_path)
+        dest = safe_join(SANDBOX, dest_path)
+
+        if not source.exists():
+            return f"Error: Source '{source_path}' does not exist."
+        if dest.exists() and not dest.is_dir():
+            return f"Error: Destination '{dest}' is not a directory."
+        
+        try:
+            dest.mkdir(parents=True, exist_ok=True)
+        except Exception as e:
+            return f"Error creating destination directory: {str(e)}"
+        target = dest / source.name
+        if target.exists():
+            return f"Error: '{source.name}' already exists in '{dest}'."
+        try:
+            source.rename(target)
+            return f"Successfully moved '{source_path}' to '{dest_path}'."
+        except Exception as e:
+            return f"Error moving file or directory: {str(e)}"
+
+    @mcp.tool() # file info tool
+    async def file_info(path: str) -> dict:
+        """
+        Get detailed information about a file or directory inside the sandbox.
+
+        Args:
+            path: Target file or folder path.
+        """
+        target = safe_join(SANDBOX, path)
+        
+        if not target.exists():
+            return {"error":f"'{path}' does not exist. "}
+        
+        try:
+            stat = target.stat()
+            info = {
+                "name" : target.name,
+                "path" : path,
+                "absolute_path": str(target),
+                "type" : "directory" if target.is_dir() else "file",
+
+                "size_bytes" : stat.st_size if target.is_file() else None,
+
+                "created_at" : stat.st_ctime,
+                "modified_at" : stat.st_mtime,
+                "accessed_at" : stat.st_atime,
+
+                "is_empty_directory": (
+                    target.is_dir() and not any(target.iterdir())
+                ),
+            }
+
+            return info
+        
+        except Exception as e:
+            return {"error": f"Error retrieving file info: {str(e)}"}
+        
+    @mcp.tool() # Search Files Tool
+    async def search_files(query: str) -> list[str]:
+        """
+        Search for files or directories whose names contain the query string.
+        The search is recursive inside the sandbox.
+
+        Args:
+            query: The substring to search for (case-insensitive).
+        """
+
+        query = query.lower()
+        matches = []
+
+        for path in SANDBOX.rglob('*'):
+            if query in path.name.lower():
+                relative_path = path.relative_to(SANDBOX)
+                matches.append(str(relative_path))
+
+        return matches
+    
+    @mcp.tool()
+    async def create_directory(path: str) -> str:
+        """
+        Create a directory (including parents) inside the sandbox.
+
+        Args:
+            path: Directory path to create.
+        """
+
+        target = safe_join(SANDBOX, path)
+
+        # If something exists at that path
+        if target.exists():
+            if target.is_dir():
+                return f"Directory '{path}' already exists."
+            else:
+                return f"Error: A file with the name '{path}' already exists."
+
+        # Try to create it
+        try:
+            target.mkdir(parents=True, exist_ok=True)
+            return f"Created directory '{path}'."
+        except Exception as e:
+            return f"Error creating directory: {str(e)}"
