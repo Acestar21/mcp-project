@@ -1,7 +1,7 @@
 from mcp.server.fastmcp import FastMCP
 from utils.browser import manager,SCREENSHOT_DIR
 from datetime import datetime
-
+from utils.safety import validate_url
 
 def register_browser_tools(mcp: FastMCP):
 
@@ -16,11 +16,21 @@ def register_browser_tools(mcp: FastMCP):
         return await manager.get_content()
     
     @mcp.tool()
-    async def take_screenshot(filename: str = "screenshot.png") -> str:
+    async def take_screenshot(url: str | None = None, filename: str = "screenshot.png") -> str:
         """
         Take a screenshot and save it in the browser server's screenshots folder.
         """
-        await manager.start_browser()
+        if url:
+            is_safe, result = validate_url(url)
+            if not is_safe:
+                return f"Blocked unsafe URL: {result}"
+
+            await manager.start()
+            await manager.page.goto(result)
+
+        else:
+            # Ensure browser is running even if no URL supplied
+            await manager.start()
 
         if filename is None or filename.strip() == "":
             timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -29,7 +39,8 @@ def register_browser_tools(mcp: FastMCP):
             # Ensure .png extension
             if not filename.lower().endswith(".png"):
                 filename += ".png"
-            save_path = SCREENSHOT_DIR / filename
+        
+        save_path = SCREENSHOT_DIR / filename
 
         try:
             await manager.page.screenshot(path=str(save_path))

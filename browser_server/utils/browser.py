@@ -1,6 +1,6 @@
 from playwright.async_api import async_playwright   
 from pathlib import Path
-
+from .safety import validate_url
 SCREENSHOT_DIR = Path(__file__).parent.parent / "screenshots" 
 SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
 # Change the directory above as needed by default creates a screenshots folder in current directory
@@ -19,10 +19,14 @@ class BrowserManager:
             self.page = await self.browser.new_page()
 
     async def goto(self, url: str):
-        """navigate to a URL"""
-        await self.start_browser()
-        await self.page.goto(url)
-        return f"Opened URL: {url}"
+        is_safe, result = validate_url(url)
+        
+        if not is_safe:
+            return f"Blocked unsafe URL: {result}"
+
+        await self.start()
+        await self.page.goto(result, timeout=45000)
+        return f"Opened URL: {result}"
     
     async def get_content(self):
         """Return HTML of current page."""
