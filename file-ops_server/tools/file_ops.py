@@ -237,14 +237,13 @@ def register_file_tools(mcp: FastMCP, sandbox_root: Path):
 
         target = safe_join(SANDBOX, path)
 
-        # If something exists at that path
         if target.exists():
             if target.is_dir():
                 return f"Directory '{path}' already exists."
             else:
                 return f"Error: A file with the name '{path}' already exists."
 
-        # Try to create it
+
         try:
             target.mkdir(parents=True, exist_ok=True)
             return f"Created directory '{path}'."
