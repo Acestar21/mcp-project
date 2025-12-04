@@ -1,22 +1,16 @@
 {
-"servers": {
-    "fileops": {
-    "command": "uv",
-    "args": [
-        "--directory",
-        "D:/Programming/Projects/mcp-project/fileops_server",
-        "run",
-        "main.py"
-    ]
-    },
-    "browser": {
-    "command": "uv",
-    "args": [
-        "--directory",
-        "D:/Programming/Projects/mcp-project/browser_server",
-        "run",
-        "main.py"
-    ]
+    "servers": {
+        "fileops": {
+            "command": "python",
+            "args": [
+                "D:\\Programming\\Projects\\mcp-project\\file-ops_server\\main.py"
+            ]
+        },
+        "browser":{
+            "command": "python",
+            "args": [
+                "D:\\Programming\\Projects\\mcp-project\\browser_server\\main.py"
+            ]
+        }
     }
-}
 }

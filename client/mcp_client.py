@@ -1,85 +1,54 @@
-import asyncio
-from typing import Optional
+from typing import Optional , Dict
 from contextlib import AsyncExitStack
-
+import json
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+from pathlib import Path
 
-
-from dotenv import load_dotenv
-
-load_dotenv()  # load environment variables from .env
 
 class MCPClient:
-    def __init__(self):
-        # Initialize session and client objects
-        self.session: Optional[ClientSession] = None
-        self.exit_stack = AsyncExitStack()
-    # methods will go here
+    def __init__(self , config_path : Optional[str] = None):
+        if config_path is None:
+            config_path = Path("../client/config/server.json")
+        with open(config_path , 'r') as f:
+            self.config = json.load(f)
 
-    async def connect_to_server(self, server_script_path: str):
+        self.sessions: Dict[str,ClientSession] = {}
+        self.exit_stack = AsyncExitStack()
+
+    async def connect_to_server(self, server_name: str):
         """Connect to an MCP server
 
         Args:
-            server_script_path: Path to the server script (.py or .js)
+            server_name: Name of the server defined in servers.json
         """
-        is_python = server_script_path.endswith('.py')
-        is_js = server_script_path.endswith('.js')
-        if not (is_python or is_js):
-            raise ValueError("Server script must be a .py or .js file")
 
-        command = "python" if is_python else "node"
+        cfg = self.config["servers"][server_name]
         server_params = StdioServerParameters(
-            command=command,
-            args=[server_script_path],
+            command=cfg["command"],
+            args=cfg["args"],
             env=None
         )
 
         stdio_transport = await self.exit_stack.enter_async_context(stdio_client(server_params))
-        self.stdio, self.write = stdio_transport
-        self.session = await self.exit_stack.enter_async_context(ClientSession(self.stdio, self.write))
+        stdin, stdout = stdio_transport
+        session = await self.exit_stack.enter_async_context(ClientSession(stdin, stdout))
+        await session.initialize()
 
-        await self.session.initialize()
+        self.sessions[server_name] = session
 
-        # List available tools
-        response = await self.session.list_tools()
+        response = await session.list_tools()
         tools = response.tools
         print("\nConnected to server with tools:", [tool.name for tool in tools])
     
-    async def chat_loop(self):
-        """Run an interactive chat loop"""
-        print("\nMCP Client Started!")
-        print("Type your queries or 'quit' to exit.")
 
-        while True:
-            try:
-                query = input("\nQuery: ").strip()
+    async def connect_all(self):
+        """Connect to all servers listed in the config."""
+        for server_name in self.config["servers"]:
+            await self.connect_to_server(server_name)
 
-                if query.lower() == 'quit':
-                    break
-
-                response = await self.process_query(query)
-                print("\n" + response)
-
-            except Exception as e:
-                print(f"\nError: {str(e)}")
 
     async def cleanup(self):
         """Clean up resources"""
         await self.exit_stack.aclose()
 
-async def main():
-    if len(sys.argv) < 2:
-        print("Usage: python client.py <path_to_server_script>")
-        sys.exit(1)
-
-    client = MCPClient()
-    try:
-        await client.connect_to_server(sys.argv[1])
-        await client.chat_loop()
-    finally:
-        await client.cleanup()
-
-if __name__ == "__main__":
-    import sys
-    asyncio.run(main())
