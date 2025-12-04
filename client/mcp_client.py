@@ -41,14 +41,42 @@ class MCPClient:
         tools = response.tools
         print("\nConnected to server with tools:", [tool.name for tool in tools])
     
-
+    
     async def connect_all(self):
         """Connect to all servers listed in the config."""
         for server_name in self.config["servers"]:
             await self.connect_to_server(server_name)
 
-
+    
     async def cleanup(self):
         """Clean up resources"""
         await self.exit_stack.aclose()
 
+
+    async def call_tool(self, server_name: str, tool_name: str, args: dict):
+        """Call a tool on a specific server"""
+
+        if server_name not in self.sessions:
+            raise ValueError(f"Server '{server_name}' is not connected.")
+        
+        session = self.sessions[server_name]
+        response = await session.call_tool(tool_name, args)
+        return response
+    
+    @staticmethod
+    def print_response(result):
+        """Print the response from a tool call"""
+        """Extract human-readable text from an MCP tool result."""
+        if not result or not result.content:
+            return ""
+
+        parts = []
+        for item in result.content:
+            if hasattr(item, "text"):
+                parts.append(item.text)
+            elif isinstance(item, str):
+                parts.append(item)
+            else:
+                parts.append(str(item))
+
+        return "\n".join(parts)
