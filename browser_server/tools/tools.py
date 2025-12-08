@@ -25,12 +25,12 @@ def register_browser_tools(mcp: FastMCP):
             if not is_safe:
                 return f"Blocked unsafe URL: {result}"
 
-            await manager.start()
+            await manager.start_browser()
             await manager.page.goto(result)
 
         else:
             # Ensure browser is running even if no URL supplied
-            await manager.start()
+            await manager.start_browser()
 
         if filename is None or filename.strip() == "":
             timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")

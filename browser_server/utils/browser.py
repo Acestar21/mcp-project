@@ -24,7 +24,7 @@ class BrowserManager:
         if not is_safe:
             return f"Blocked unsafe URL: {result}"
 
-        await self.start()
+        await self.start_browser()
         await self.page.goto(result, timeout=45000)
         return f"Opened URL: {result}"
     
