@@ -1,51 +1,36 @@
 import { useState } from "react";
-import reactLogo from "./assets/react.svg";
 import { invoke } from "@tauri-apps/api/core";
 import "./App.css";
 
-function App() {
-  const [greetMsg, setGreetMsg] = useState("");
-  const [name, setName] = useState("");
+export default function App() {
+  const [query, setQuery] = useState("");
+  const [output, setOutput] = useState("");
 
-  async function greet() {
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    setGreetMsg(await invoke("greet", { name }));
+  async function sendQuery() {
+    try {
+      const raw = await invoke<string>("send_to_python", { query });
+      // raw is a JSON line returned by bridge.py e.g. {"ok":true,"response":"..."}
+      try {
+        const parsed = JSON.parse(raw);
+        if (parsed.ok) {
+          setOutput(typeof parsed.response === "string" ? parsed.response : JSON.stringify(parsed.response, null, 2));
+        } else {
+          setOutput("Error: " + (parsed.error || JSON.stringify(parsed)));
+        }
+      } catch (e) {
+        setOutput("Non-JSON response: " + raw);
+      }
+    } catch (err) {
+      setOutput("Invoke error: " + String(err));
+    }
   }
 
   return (
-    <main className="container">
-      <h1>Welcome to Tauri + React</h1>
-
-      <div className="row">
-        <a href="https://vite.dev" target="_blank">
-          <img src="/vite.svg" className="logo vite" alt="Vite logo" />
-        </a>
-        <a href="https://tauri.app" target="_blank">
-          <img src="/tauri.svg" className="logo tauri" alt="Tauri logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <p>Click on the Tauri, Vite, and React logos to learn more.</p>
-
-      <form
-        className="row"
-        onSubmit={(e) => {
-          e.preventDefault();
-          greet();
-        }}
-      >
-        <input
-          id="greet-input"
-          onChange={(e) => setName(e.currentTarget.value)}
-          placeholder="Enter a name..."
-        />
-        <button type="submit">Greet</button>
-      </form>
-      <p>{greetMsg}</p>
-    </main>
+    <div style={{ padding: 20 }}>
+      <h3>MCP Bridge Test</h3>
+      <input value={query} onChange={(e) => setQuery(e.target.value)} style={{ width: "60%" }} />
+      <button onClick={sendQuery} style={{ marginLeft: 8 }}>Send</button>
+      <pre style={{ whiteSpace: "pre-wrap", marginTop: 12 }}>{output}</pre>
+    </div>
   );
 }
-
-export default App;

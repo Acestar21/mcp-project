@@ -10,7 +10,7 @@ from ai.ollama import OllamaAI
 class MCPClient:
     def __init__(self , config_path : Optional[str] = None):
         if config_path is None:
-            config_path = Path("../client/config/server.json")
+            config_path = Path("D:\Programming\Projects\mcp-project\client\config\server.json")
         with open(config_path , 'r') as f:
             self.config = json.load(f)
         self.ai = OllamaAI()
@@ -44,14 +44,13 @@ class MCPClient:
         # Debug print: ensure tools load
         resp = await session.list_tools()
         tools = [t.name for t in resp.tools]
-        print(f"[Connected] {server_name} → tools = {tools}")
+        print(f"[Connected] {server_name}  tools = {tools}")
     
     
     async def connect_all(self):
         """Connect to all servers listed in the config."""
         for server_name in self.config["servers"]:
             await self.connect_to_server(server_name)
-        print("DEBUG SESSIONS:", self.sessions.keys())
         
 
     
