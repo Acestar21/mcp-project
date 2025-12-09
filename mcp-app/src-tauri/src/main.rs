@@ -1,97 +1,122 @@
 // src-tauri/src/main.rs
 #![cfg_attr(all(not(debug_assertions), target_os = "windows"), windows_subsystem = "windows")]
 
-use std::process::{Command, Stdio, Child};
-use std::io::{Write, BufRead, BufReader};
-use std::sync::{Arc, Mutex};
-use tauri::{Manager, State};
-use serde_json::json;
+use std::{
+    io::{BufRead, BufReader, Write},
+    process::{Child, Command, Stdio},
+    sync::{Arc, Mutex},
+    thread,
+};
 
+use serde_json::json;
+use tauri::{Emitter, State};
+
+/// Allow cloning PyEngine by cloning its Arc fields.
+#[derive(Clone)]
 struct PyEngine {
-    child: Arc<Mutex<Child>>,
+    _child: Arc<Mutex<Child>>,
     stdin: Arc<Mutex<std::process::ChildStdin>>,
     stdout: Arc<Mutex<BufReader<std::process::ChildStdout>>>,
 }
 
+/// Tauri command — sends a query to Python.
+/// IMPORTANT: This only WRITES. It does not READ (to avoid deadlocks).
+/// The background thread handles reading and emitting events.
 #[tauri::command]
-fn send_to_python(state: State<PyEngine>, query: String) -> Result<String, String> {
-  // send JSON line to python, wait for single-line JSON response
+fn send_to_python(state: State<PyEngine>, query: String) -> Result<(), String> {
     let payload = json!({ "query": query }).to_string() + "\n";
 
-  // write
     {
-    let mut stdin = state.stdin.lock().map_err(|e| format!("stdin lock error: {}", e))?;
-    stdin.write_all(payload.as_bytes()).map_err(|e| format!("stdin write error: {}", e))?;
-    stdin.flush().map_err(|e| format!("stdin flush error: {}", e))?;
+        let mut stdin = state
+            .stdin
+            .lock()
+            .map_err(|e| format!("stdin lock error: {}", e))?;
+        stdin
+            .write_all(payload.as_bytes())
+            .map_err(|e| format!("stdin write error: {}", e))?;
+        stdin.flush().map_err(|e| format!("stdin flush error: {}", e))?;
     }
 
-  // read one line
-    let mut line = String::new();
-    {
-    let mut stdout = state.stdout.lock().map_err(|e| format!("stdout lock error: {}", e))?;
-    stdout.read_line(&mut line).map_err(|e| format!("stdout read error: {}", e))?;
-    }
-
-    Ok(line)
+    Ok(())
 }
 
+/// Launches python bridge.py and returns engine.
 fn spawn_python_bridge(python_exec: &str, bridge_path: &str) -> Result<PyEngine, String> {
     let mut child = Command::new(python_exec)
-    .arg("-u") // unbuffered
-    .arg(bridge_path)
-    .stdin(Stdio::piped())
-    .stdout(Stdio::piped())
-    .stderr(Stdio::inherit()) // let stderr go to tauri console for debugging
-    .spawn()
-    .map_err(|e| format!("Failed to spawn python bridge: {}", e))?;
+        .arg("-u")
+        .arg(bridge_path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit()) // Show python errors in Tauri console
+        .spawn()
+        .map_err(|e| format!("Failed to spawn python bridge: {}", e))?;
 
-  // Take pipes
     let child_stdin = child.stdin.take().ok_or("Failed to open child stdin")?;
     let child_stdout = child.stdout.take().ok_or("Failed to open child stdout")?;
-    let buf = BufReader::new(child_stdout);
 
-    let engine = PyEngine {
-    child: Arc::new(Mutex::new(child)),
-    stdin: Arc::new(Mutex::new(child_stdin)),
-    stdout: Arc::new(Mutex::new(buf)),
-    };
-
-    Ok(engine)
+    Ok(PyEngine {
+        _child: Arc::new(Mutex::new(child)),
+        stdin: Arc::new(Mutex::new(child_stdin)),
+        stdout: Arc::new(Mutex::new(BufReader::new(child_stdout))),
+    })
 }
 
+/// Read Python's initial handshake line
 fn read_ready_line(engine: &PyEngine) -> Result<String, String> {
     let mut line = String::new();
-    let mut stdout = engine.stdout.lock().map_err(|e| format!("stdout lock error: {}", e))?;
-    stdout.read_line(&mut line).map_err(|e| format!("read_line error: {}", e))?;
+    let mut stdout = engine
+        .stdout
+        .lock()
+        .map_err(|e| format!("stdout lock error: {}", e))?;
+    stdout
+        .read_line(&mut line)
+        .map_err(|e| format!("read_line error: {}", e))?;
     Ok(line)
 }
 
 fn main() {
-  // Adjust these paths if your project layout is different.
-  let python_executable = "python"; // or full path e.g. "C:\\Python311\\python.exe"
-  let bridge_rel_path = "D:\\Programming\\Projects\\mcp-project\\client\\bridge.py"; // relative to src-tauri dir when running in dev
+    let python_executable = "python";
+    // Ensure this path is correct on your machine
+    let bridge_path = "D:\\Programming\\Projects\\mcp-project\\client\\bridge.py";
 
-  // spawn python bridge
-    let engine = spawn_python_bridge(python_executable, bridge_rel_path)
-    .expect("Could not start Python bridge. Ensure python is on PATH and bridge.py exists.");
+    // Start python
+    let engine = spawn_python_bridge(python_executable, bridge_path)
+        .expect("Could not start python bridge");
 
-  // read initial ready handshake
+    // Perform handshake
     match read_ready_line(&engine) {
-    Ok(line) => {
-      // Optionally parse and log; for now we print to console
-        println!("Python bridge handshake: {}", line.trim_end());
-    }
-    Err(e) => {
-        eprintln!("Failed to read handshake from python bridge: {}", e);
-    }
+        Ok(line) => println!("Python bridge handshake: {}", line.trim()),
+        Err(e) => eprintln!("Handshake failed: {}", e),
     }
 
-  // move engine into managed state for Tauri commands
-    let engine_state = engine;
+    let engine_state = engine.clone();
 
     tauri::Builder::default()
-    .manage(engine_state)
-    .invoke_handler(tauri::generate_handler![send_to_python])
-    .run(tauri::generate_context!())
-    .expect("error while running tauri application");
+        .manage(engine_state.clone())
+        .setup(move |app| {
+            // Clone the app handle so it can be moved to the thread safely
+            let app_handle = app.handle().clone();
+            let engine_for_thread = engine_state.clone();
+
+            // Stream python output continuously in the background
+            thread::spawn(move || {
+                let mut stdout = engine_for_thread.stdout.lock().unwrap();
+
+                // Iterate over a mutable borrow `(&mut *stdout)`
+                // This prevents moving the internal BufReader out of the MutexGuard
+                for line in (&mut *stdout).lines() {
+                    if let Ok(text) = line {
+                        println!("[PYTHON STREAM] {}", text);
+
+                        // Emit event to frontend React
+                        let _ = app_handle.emit("python-output", text);
+                    }
+                }
+            });
+
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![send_to_python])
+        .run(tauri::generate_context!())
+        .expect("error while running Tauri");
 }
