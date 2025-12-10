@@ -143,31 +143,46 @@ def register_file_tools(mcp: FastMCP, sandbox_root: Path):
     async def move_file(source_path: str, dest_path: str) -> str:
         """
         Move a file or directory within the sandbox.
-
-        Args:
-            source_path: Current path of the file or directory.
-            dest_path: Destination path.
+        
+        - If dest_path is an existing directory (or ends with '/'), moves source into it.
+        - Otherwise, moves/renames source to dest_path.
         """
         source = safe_join(SANDBOX, source_path)
         dest = safe_join(SANDBOX, dest_path)
 
         if not source.exists():
             return f"Error: Source '{source_path}' does not exist."
-        if dest.exists() and not dest.is_dir():
-            return f"Error: Destination '{dest}' is not a directory."
+
+        # Determine if the user intends to move INTO a directory
+        # 1. It ends with a slash (explicit directory intention)
+        # 2. It matches an existing directory
+        is_directory_move = dest_path.endswith('/') or dest_path.endswith('\\') or (dest.exists() and dest.is_dir())
+
+        if is_directory_move:
+            # Move INTO the directory
+            try:
+                dest.mkdir(parents=True, exist_ok=True)
+                target = dest / source.name
+                
+                if target.exists():
+                    return f"Error: '{target.name}' already exists in '{dest_path}'."
+                
+                source.rename(target)
+                return f"Successfully moved '{source_path}' into '{dest_path}'."
+            except Exception as e:
+                return f"Error moving file: {str(e)}"
         
-        try:
-            dest.mkdir(parents=True, exist_ok=True)
-        except Exception as e:
-            return f"Error creating destination directory: {str(e)}"
-        target = dest / source.name
-        if target.exists():
-            return f"Error: '{source.name}' already exists in '{dest}'."
-        try:
-            source.rename(target)
-            return f"Successfully moved '{source_path}' to '{dest_path}'."
-        except Exception as e:
-            return f"Error moving file or directory: {str(e)}"
+        else:
+            # Move TO the specific path (Rename)
+            if dest.exists():
+                return f"Error: Destination '{dest_path}' already exists."
+            
+            try:
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                source.rename(dest)
+                return f"Successfully moved/renamed '{source_path}' to '{dest_path}'."
+            except Exception as e:
+                return f"Error moving file: {str(e)}"
 
     @mcp.tool() # file info tool
     async def file_info(path: str) -> dict:
