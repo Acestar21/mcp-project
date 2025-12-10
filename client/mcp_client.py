@@ -72,73 +72,86 @@ class MCPClient:
 
     async def process(self, query: str):
             """
-            Process a user query, execute tools if needed, and return a natural language response.
+            Process a user query, allowing for sequential/chained tool execution.
             """
+            # Maintain a conversation history for this specific task
             messages = [{"role": "user", "content": query}]
             tools = await self.get_all_tools()
 
-            response = self.ai.generate(messages, tools)
-            if isinstance(response, dict):
-                reply = response["message"]["content"]
-            else:
-                reply = response.message.content
+            # Allow up to 15 steps to prevent infinite loops
+            for _ in range(15):
+                # 1. Ask the AI what to do next
+                response = self.ai.generate(messages, tools)
+                
+                if isinstance(response, dict):
+                    reply = response["message"]["content"]
+                else:
+                    reply = response.message.content
 
-            # 2. Check if the AI wants to use a tool (looks for JSON)
-            try:
+                # 2. Check if the AI wants to use a tool (looks for JSON)
+                # We assume the AI complies with "Respond ONLY with JSON" for tools
                 json_match = re.search(r"\{.*\}", reply, re.DOTALL)
+                
+                tool_found = False
+                
                 if json_match:
-                    call = json.loads(json_match.group())
-
-                    if "tool" in call:
-                        full_name = call["tool"]
-                        args = call.get("args", {})
+                    try:
+                        call = json.loads(json_match.group())
                         
-                        # Parse "server.tool" -> "server", "tool"
-                        if "." in full_name:
-                            server_name, tool_name = full_name.split(".", 1)
-                        else:
-                            # Fallback if AI forgets the prefix
-                            # You might need logic here to find the right server, 
-                            # but for now let's assume it provides it correctly or fail gracefully
-                            return f"Error: Tool name '{full_name}' must be in format 'server.tool'"
+                        if "tool" in call:
+                            tool_found = True
+                            full_name = call["tool"]
+                            args = call.get("args", {})
+                            
+                            # Parse "server.tool"
+                            if "." in full_name:
+                                server_name, tool_name = full_name.split(".", 1)
+                            else:
+                                # Handle error if AI forgets prefix
+                                error_msg = f"Error: Tool '{full_name}' must include server prefix (e.g., 'server.tool')"
+                                messages.append({"role": "assistant", "content": reply})
+                                messages.append({"role": "system", "content": error_msg})
+                                continue # Try again with error info
 
-                        print(f"   [Tool Call] {full_name} with args: {args}")
+                            print(f"   [Tool Call] {full_name} with args: {args}")
 
-                        # 3. Execute the tool
-                        result = await self.call_tool(server_name, tool_name, args)
-                        
-                        # Convert result to string
-                        content_str = ""
-                        if hasattr(result, 'content'):
-                            for item in result.content:
-                                if hasattr(item, 'text'):
-                                    content_str += item.text + "\n"
-                                else:
-                                    content_str += str(item) + "\n"
-                        else:
-                            content_str = str(result)
+                            # 3. Execute the tool
+                            try:
+                                result = await self.call_tool(server_name, tool_name, args)
+                                
+                                # Convert result to clean string
+                                content_str = self.print_response(result)
+                            except Exception as tool_err:
+                                content_str = f"Error executing tool: {str(tool_err)}"
 
-                        tool_output = f"[Tool Result from {full_name}]:\n{content_str}"
+                            # 4. Update History
+                            # We append the AI's "Request" and the System's "Result"
+                            messages.append({"role": "assistant", "content": reply})
+                            messages.append({
+                                "role": "user", 
+                                "content": f"[Tool Output from {full_name}]:\n{content_str}"
+                            })
 
-                        # 4. FEEDBACK LOOP: 
-                        # We add the AI's intent and the Tool's actual result to the history
-                        messages.append({"role": "assistant", "content": reply})
-                        messages.append({
-                            "role": "system", 
-                            # STRICTER INSTRUCTION HERE:
-                            "content": f"[System: The tool execution succeeded. Here is the result.]\n{tool_output}\n\n[Instruction: Summarize this result for the user in natural language. Do not dump the raw JSON.]"
-                        })
-                        # 5. Ask the AI again: "Given this tool output, what is the answer?"
-                        final_response = self.ai.generate(messages, tools)
-                        return final_response["message"]["content"]
+                            # 5. Loop continues! 
+                            # The code goes back to the top, sends the updated 'messages' to Ollama,
+                            # and Ollama decides if it needs *another* tool or if it's done.
+                            continue
 
-            except Exception as e:
-                print(f"Error processing tool call: {e}")
-                # If something breaks, at least return the raw text so we see what happened
-                return reply
+                    except json.JSONDecodeError:
+                        # Found braces but valid JSON, treat as text
+                        pass
+                    except Exception as e:
+                        print(f"Processing Error: {e}")
+                
+                # If we get here, either:
+                # A) No tool was found in the response
+                # B) The tool logic finished and we are breaking the loop manually (though the 'continue' handles the loop)
+                
+                if not tool_found:
+                    # The AI replied with normal text (no tool), so we are done.
+                    return reply
 
-            # If no tool was called, just return the AI's chat response
-            return reply
+            return "Error: Maximum task steps exceeded (stuck in loop)."
 
     async def get_all_tools(self):
         """Return cleaned tool definitions for Ollama."""

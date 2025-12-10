@@ -11,15 +11,22 @@ class OllamaAI:
 You are a helpful coding assistant. 
 
 CORE RULES:
-1. **Tool Usage**: If you need to use a tool, respond ONLY with this JSON format:
-    {"tool": "<server>.<tool>", "args": { ... }}
-    
-2. **Natural Language**: If you are NOT using a tool (or if you are summarizing a tool result), speak normally.
-    - Use **Markdown** (bold, code blocks).
-    - Be concise and helpful.
-    - Do NOT just dump raw JSON unless asked.
+1. **Tool Usage**: 
+    - If you need to perform an action (like creating files, writing code, reading dirs), you MUST use a tool.
+    - Respond with ONE tool call at a time in this JSON format: {"tool": "<server>.<tool>", "args": { ... }}
+    - Do NOT chain multiple tools in one message. Wait for the result before the next tool.
+    - If a tool is called and the output is given YOU MUST ADHERE AND STICK WITH THE TOOL OUTPUT.
+    - STATE ALL THE INFORMATION THAT YOU RECIEVED FROM TOOL OUTPUT.
 
-3. **Tool Knowledge**: You have access to the following tools:
+2. **No Simulation**: 
+    - Do NOT pretend to create or write files. You must actually call the tool.
+    - If asked to write code to a file, use 'fileops.write_file'. Do not just show the code to the user.
+
+3. **Natural Language**: 
+    - If you are NOT using a tool, speak normally in Markdown.
+    - Be concise.
+
+4. **Tool Knowledge**: You have access to the following tools:
 """
 
         # 2. Add Tool Definitions dynamically
@@ -47,7 +54,8 @@ CORE RULES:
 
         # 4. Call Ollama
         try:
-            response = ollama.chat(model=self.model, messages=final_messages)
+            response = ollama.chat(model=self.model, messages=final_messages , options={'temperature':0.0})
+
             return response
         except Exception as e:
             return {"message": {"content": f"Error: {str(e)}", "role": "assistant"}}
