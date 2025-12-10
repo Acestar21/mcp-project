@@ -1,6 +1,12 @@
+// mcp-app/src/App.tsx
 import { useEffect, useState, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
+import Markdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
+import { dracula } from "react-syntax-highlighter/dist/esm/styles/prism";
+import TextareaAutosize from "react-textarea-autosize";
 
 interface Message {
   role: "user" | "assistant" | "system" | "error";
@@ -10,26 +16,29 @@ interface Message {
 export default function App() {
   const [query, setQuery] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
+  const [isLoading, setIsLoading] = useState(false); 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // 1. Auto-scroll to bottom when messages change
+  // Auto-scroll to bottom
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
 
   useEffect(() => {
     scrollToBottom();
-  }, [messages]);
+  }, [messages, isLoading]);
 
-  // 2. Setup Event Listener (ROBUST FIX FOR DUPLICATES)
+  // Setup Event Listener
   useEffect(() => {
     let unlistenFunction: UnlistenFn | undefined;
     let isMounted = true;
 
-    // Create the listener
     const setupListener = async () => {
       const unlisten = await listen<string>("python-output", (event) => {
-        if (!isMounted) return; // Ignore events if component is unmounted
+        if (!isMounted) return;
+        
+        // We received a reply, stop loading
+        setIsLoading(false);
 
         const text = event.payload;
         try {
@@ -40,21 +49,16 @@ export default function App() {
             setMessages((prev) => [...prev, { role: "error", content: JSON.stringify(parsed) }]);
           }
         } catch {
+          // Fallback for non-JSON output
           setMessages((prev) => [...prev, { role: "system", content: text }]);
         }
       });
 
       unlistenFunction = unlisten;
-
-      // If the component unmounted while we were waiting for the promise, clean up immediately
-      if (!isMounted) {
-        unlisten();
-      }
     };
 
     setupListener();
 
-    // Cleanup function
     return () => {
       isMounted = false;
       if (unlistenFunction) {
@@ -64,22 +68,26 @@ export default function App() {
   }, []);
 
   async function sendQuery() {
-    if (!query.trim()) return;
+    if (!query.trim() || isLoading) return;
 
     const currentQuery = query;
-    // Optimistic UI update: Show user message immediately
+    // Optimistic UI update
     setMessages((prev) => [...prev, { role: "user", content: currentQuery }]);
     setQuery("");
+    setIsLoading(true); // Start loading
 
     try {
       await invoke("send_to_python", { query: currentQuery });
     } catch (error) {
       setMessages((prev) => [...prev, { role: "error", content: `Failed to send: ${error}` }]);
+      setIsLoading(false);
     }
   }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter") {
+    // Send on Enter (but Shift+Enter allows new lines)
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
       sendQuery();
     }
   };
@@ -96,10 +104,10 @@ export default function App() {
           borderRadius: "8px",
           padding: "15px",
           marginBottom: "15px",
-          backgroundColor: "#f9f9f9",
+          backgroundColor: "#1e1e1e", // Dark background for code readability
           display: "flex",
           flexDirection: "column",
-          gap: "10px",
+          gap: "15px",
         }}
       >
         {messages.map((msg, i) => (
@@ -107,31 +115,67 @@ export default function App() {
             key={i}
             style={{
               alignSelf: msg.role === "user" ? "flex-end" : "flex-start",
-              maxWidth: "80%",
-              padding: "10px",
+              maxWidth: "85%",
+              padding: "12px",
               borderRadius: "8px",
               backgroundColor:
                 msg.role === "user"
                   ? "#007bff"
                   : msg.role === "error"
-                  ? "#ffcccc"
-                  : "#e1e1e1",
-              color: msg.role === "user" ? "white" : "black",
-              whiteSpace: "pre-wrap",
-              boxShadow: "0 1px 2px rgba(0,0,0,0.1)"
+                  ? "#ff4444"
+                  : "#2d2d2d", // Dark gray for assistant
+              color: "white",
+              boxShadow: "0 2px 4px rgba(0,0,0,0.2)"
             }}
           >
-            <div style={{ fontSize: "0.8em", opacity: 0.7, marginBottom: "4px" }}>
-              {msg.role === "user" ? "You" : "Assistant"}
+            <div style={{ fontSize: "0.8em", opacity: 0.7, marginBottom: "6px", fontWeight: "bold" }}>
+              {msg.role.toUpperCase()}
             </div>
-            <div>{msg.content}</div>
+            
+            {/* THIS IS THE FIX BELOW */}
+            <Markdown
+              remarkPlugins={[remarkGfm]}
+              components={{
+                code(props) {
+                  // Destructure ref out so it doesn't get passed to SyntaxHighlighter
+                  const { children, className, node, ref, ...rest } = props;
+                  const match = /language-(\w+)/.exec(className || "");
+                  return match ? (
+                    <SyntaxHighlighter
+                      {...rest}
+                      children={String(children).replace(/\n$/, "")}
+                      style={dracula}
+                      language={match[1]}
+                      PreTag="div"
+                    />
+                  ) : (
+                    <code {...rest} className={className} style={{backgroundColor: '#444', padding: '2px 4px', borderRadius: '4px'}}>
+                      {children}
+                    </code>
+                  );
+                },
+              }}
+            >
+              {msg.content}
+            </Markdown>
+
           </div>
         ))}
+        
+        {/* Loading Indicator */}
+        {isLoading && (
+            <div style={{ alignSelf: 'flex-start', color: '#aaa', fontStyle: 'italic', marginLeft: '10px' }}>
+                Assistant is thinking...
+            </div>
+        )}
         <div ref={messagesEndRef} />
       </div>
 
-      <div style={{ display: "flex", gap: "10px" }}>
-        <input
+      <div style={{ display: "flex", gap: "10px", alignItems: "flex-end" }}>
+        {/* Auto-Resizing Input */}
+        <TextareaAutosize
+          minRows={1}
+          maxRows={6}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={handleKeyDown}
@@ -139,25 +183,29 @@ export default function App() {
           style={{
             flex: 1,
             padding: "12px",
-            borderRadius: "4px",
+            borderRadius: "6px",
             border: "1px solid #ccc",
-            fontSize: "16px"
+            fontSize: "16px",
+            resize: "none",
+            fontFamily: "inherit"
           }}
         />
         <button
           onClick={sendQuery}
+          disabled={isLoading}
           style={{
-            padding: "10px 24px",
-            borderRadius: "4px",
+            padding: "12px 24px",
+            borderRadius: "6px",
             border: "none",
-            backgroundColor: "#007bff",
+            backgroundColor: isLoading ? "#6c757d" : "#007bff",
             color: "white",
-            cursor: "pointer",
+            cursor: isLoading ? "default" : "pointer",
             fontSize: "16px",
-            fontWeight: "bold"
+            fontWeight: "bold",
+            height: "45px"
           }}
         >
-          Send
+          {isLoading ? "..." : "Send"}
         </button>
       </div>
     </div>

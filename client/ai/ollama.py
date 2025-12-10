@@ -6,29 +6,48 @@ class OllamaAI:
         self.model = model
 
     def generate(self, messages, tools):
-        # Build extremely explicit system instructions for local LLM
-        system_msg = """
-You are an AI assistant that MUST use the provided tools to answer queries.
+        # 1. Base Instructions (The "Personality")
+        system_rules = """
+You are a helpful coding assistant. 
 
-RULES:
-- If a tool should be used, respond ONLY with JSON:
+CORE RULES:
+1. **Tool Usage**: If you need to use a tool, respond ONLY with this JSON format:
     {"tool": "<server>.<tool>", "args": { ... }}
-- DO NOT invent tool names.
-- DO NOT answer normally if a tool exists for the query.
-- DO NOT guess missing args — ask the user.
-- You can call ANY tool listed below.
+    
+2. **Natural Language**: If you are NOT using a tool (or if you are summarizing a tool result), speak normally.
+    - Use **Markdown** (bold, code blocks).
+    - Be concise and helpful.
+    - Do NOT just dump raw JSON unless asked.
 
-AVAILABLE TOOLS:
+3. **Tool Knowledge**: You have access to the following tools:
 """
 
+        # 2. Add Tool Definitions dynamically
         for t in tools:
-            system_msg += f"""
-TOOL NAME: {t['name']}
-DESCRIPTION: {t['description']}
-PARAMETERS: {json.dumps(t['parameters'], indent=2)}
-"""
+            system_rules += f"""
+                - Name: {t['name']}
+                    Description: {t['description']}
+                    Parameters: {json.dumps(t['parameters'])}
+        """
 
-        msgs = [{"role": "system", "content": system_msg}] + messages
+        # 3. Construct the Message List
+        # We prefer to put the system instructions at the VERY START.
+        # If the caller already provided a system message (like 'Summarize this'), we append ours or prepend.
+        
+        final_messages = [{"role": "system", "content": system_rules}]
+        
+        # Add the rest of the conversation history
+        # (We skip existing system messages to avoid confusion, or you can keep them)
+        for m in messages:
+            if m["role"] != "system":
+                final_messages.append(m)
+            else:
+                # If there was a specific system instruction (like the summarization prompt), add it as 'user' or 'system' secondary
+                final_messages.append(m)
 
-        response = ollama.chat(model=self.model, messages=msgs)
-        return response
+        # 4. Call Ollama
+        try:
+            response = ollama.chat(model=self.model, messages=final_messages)
+            return response
+        except Exception as e:
+            return {"message": {"content": f"Error: {str(e)}", "role": "assistant"}}
