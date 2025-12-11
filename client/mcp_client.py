@@ -9,13 +9,84 @@ from ai.ollama import OllamaAI
 
 class MCPClient:
     def __init__(self , config_path : Optional[str] = None):
+
+        base_dir = Path(__file__).parent
         if config_path is None:
-            config_path = Path("D:\Programming\Projects\mcp-project\client\config\server.json")
+            config_path = base_dir / "config" / "server.json"
         with open(config_path , 'r') as f:
             self.config = json.load(f)
         self.ai = OllamaAI()
         self.sessions: Dict[str,ClientSession] = {}
         self.exit_stack = AsyncExitStack()
+        self.project_root = base_dir.parent
+
+
+        self.history_file = base_dir / "history.json"
+        self.history = self.load_memory()
+
+    def load_memory(self):
+        """Load history from file if it exists."""
+        if self.history_file.exists():
+            try:
+                with open(self.history_file, "r") as f:
+                    data = json.load(f)
+                    print(f"[Memory] Loaded {len(data)} previous messages.")
+                    return data
+            except Exception as e:
+                print(f"[Memory] Error loading file: {e}")
+        return []
+    
+    def save_memory(self):
+        """Save current history to file."""
+        try:
+            with open(self.history_file, "w") as f:
+                json.dump(self.history, f, indent=2)
+        except Exception as e:
+            print(f"[Memory] Error saving file: {e}")
+
+    def clear_memory(self):
+        """Wipe the history."""
+        self.history = []
+        self.save_memory()
+        return "Memory cleared. I have forgotten everything."
+    
+    async def summarize_memory(self):
+        """Compress the history to save space."""
+        # Only summarize if we actually have enough content to compress
+        if len(self.history) < 4:
+            return "History is too short to summarize."
+
+        print("[Memory] Auto-summarizing conversation to prevent overflow...")
+        
+        # Strategy: Keep the System Prompt (implied) + Last 2 turns (User/Assistant or Tool).
+        # Compress everything older than that.
+        # This ensures the 'immediate' context (like the question just asked) is never lost.
+        to_summarize = self.history[:-2] 
+        recent_context = self.history[-2:]
+
+        summary_prompt = [
+            {"role": "system", "content": "Summarize the following technical conversation. Preserve key technical details, file names, errors, and outcomes. Be concise."},
+            {"role": "user", "content": json.dumps(to_summarize)}
+        ]
+
+        # Call AI without tools for the summary
+        response = self.ai.generate(summary_prompt, []) 
+        
+        if isinstance(response, dict):
+            summary_text = response["message"]["content"]
+        else:
+            summary_text = response.message.content
+
+        # Reconstruct History: [Summary Node] + [Recent Context]
+        # This effectively moves old data to "Long-Term Memory" (the summary)
+        # and keeps "Short-Term Memory" (recent context) active.
+        new_history = [
+            {"role": "system", "content": f"PREVIOUS CONVERSATION SUMMARY: {summary_text}"},
+        ] + recent_context
+
+        self.history = new_history
+        self.save_memory()
+        return f"Memory summarized. Reduced from {len(to_summarize) + 2} messages to {len(self.history)}."
 
     async def connect_to_server(self, server_name: str):
         """Connect to an MCP server
@@ -23,11 +94,16 @@ class MCPClient:
         Args:
             server_name: Name of the server defined in servers.json
         """
-
         cfg = self.config["servers"][server_name]
+        script_path = self.project_root / cfg["args"][0]
+        
+        # Reconstruct args with the absolute path
+        final_args = [str(script_path)] + cfg["args"][1:]
+
+
         server_params = StdioServerParameters(
             command=cfg["command"],
-            args=cfg["args"],
+            args=final_args,
             env=None
         )
 
@@ -42,9 +118,9 @@ class MCPClient:
         self.sessions[server_name] = session
 
         # Debug print: ensure tools load
-        resp = await session.list_tools()
-        tools = [t.name for t in resp.tools]
-        print(f"[Connected] {server_name}  tools = {tools}")
+        # resp = await session.list_tools()
+        # tools = [t.name for t in resp.tools]
+        # print(f"[Connected] {server_name}  tools = {tools}")
     
     
     async def connect_all(self):
@@ -75,13 +151,24 @@ class MCPClient:
             Process a user query, allowing for sequential/chained tool execution.
             """
             # Maintain a conversation history for this specific task
-            messages = [{"role": "user", "content": query}]
-            tools = await self.get_all_tools()
+            if query.strip().lower() in ["/clear", "/reset", "/wipe"]:
+                return self.clear_memory()
+            
+            if query.strip().lower() in ["/summarize", "/sum"]:
+                return await self.summarize_memory()
+    
+            if len(self.history) > 25:
+                await self.summarize_memory()
+
+        # 3. Add User Query to Persistent History
+            self.history.append({"role": "user", "content": query})
+            self.save_memory()
 
             # Allow up to 15 steps to prevent infinite loops
+            tools = await self.get_all_tools()
             for _ in range(15):
                 # 1. Ask the AI what to do next
-                response = self.ai.generate(messages, tools)
+                response = self.ai.generate(self.history, tools)
                 
                 if isinstance(response, dict):
                     reply = response["message"]["content"]
@@ -109,8 +196,8 @@ class MCPClient:
                             else:
                                 # Handle error if AI forgets prefix
                                 error_msg = f"Error: Tool '{full_name}' must include server prefix (e.g., 'server.tool')"
-                                messages.append({"role": "assistant", "content": reply})
-                                messages.append({"role": "system", "content": error_msg})
+                                self.history.append({"role": "assistant", "content": reply})
+                                self.history.append({"role": "system", "content": error_msg})
                                 continue # Try again with error info
 
                             print(f"   [Tool Call] {full_name} with args: {args}")
@@ -126,15 +213,12 @@ class MCPClient:
 
                             # 4. Update History
                             # We append the AI's "Request" and the System's "Result"
-                            messages.append({"role": "assistant", "content": reply})
-                            messages.append({
-                                "role": "user", 
-                                "content": f"[Tool Output from {full_name}]:\n{content_str}"
+                            self.history.append({"role": "assistant", "content": reply})
+                            self.history.append({
+                                "role": "user",  # <--- CHANGED FROM 'user' TO 'system'
+                                "content": f"OBSERVATION [Tool Output from {full_name}]:\n{content_str}"
                             })
-
-                            # 5. Loop continues! 
-                            # The code goes back to the top, sends the updated 'messages' to Ollama,
-                            # and Ollama decides if it needs *another* tool or if it's done.
+                            self.save_memory()
                             continue
 
                     except json.JSONDecodeError:
@@ -148,7 +232,9 @@ class MCPClient:
                 # B) The tool logic finished and we are breaking the loop manually (though the 'continue' handles the loop)
                 
                 if not tool_found:
-                    # The AI replied with normal text (no tool), so we are done.
+                # 5. Save Final Answer to History & Return
+                    self.history.append({"role": "assistant", "content": reply})
+                    self.save_memory()
                     return reply
 
             return "Error: Maximum task steps exceeded (stuck in loop)."

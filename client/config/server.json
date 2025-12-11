@@ -3,13 +3,13 @@
         "fileops": {
             "command": "python",
             "args": [
-                "D:\\Programming\\Projects\\mcp-project\\file-ops_server\\main.py"
+                "file-ops_server/main.py"
             ]
         },
         "browser":{
             "command": "python",
             "args": [
-                "D:\\Programming\\Projects\\mcp-project\\browser_server\\main.py"
+                "browser_server/main.py"
             ]
         }
     }
