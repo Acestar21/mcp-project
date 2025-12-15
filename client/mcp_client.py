@@ -6,6 +6,7 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from pathlib import Path
 from ai.ollama import OllamaAI
+import sys
 
 class MCPClient:
     def __init__(self , config_path : Optional[str] = None):
@@ -31,10 +32,10 @@ class MCPClient:
             try:
                 with open(self.history_file, "r") as f:
                     data = json.load(f)
-                    print(f"[Memory] Loaded {len(data)} previous messages.")
+                    print(f"[Memory] Loaded {len(data)} previous messages.",file=sys.stderr)
                     return data
             except Exception as e:
-                print(f"[Memory] Error loading file: {e}")
+                print(f"[Memory] Error loading file: {e}",file=sys.stderr)
         return []
     
 
@@ -44,7 +45,7 @@ class MCPClient:
             with open(self.history_file, "w") as f:
                 json.dump(self.history, f, indent=2)
         except Exception as e:
-            print(f"[Memory] Error saving file: {e}")
+            print(f"[Memory] Error saving file: {e}",file=sys.stderr)
 
 
     def clear_memory(self):
@@ -60,9 +61,9 @@ class MCPClient:
         if len(self.history) < 4:
             return "History is too short to summarize."
 
-        print("[Memory] Auto-summarizing conversation to prevent overflow...")
+        print("[Memory] Auto-summarizing conversation to prevent overflow...",file=sys.stderr)
         
-        # Strategy: Keep the System Prompt (implied) + Last 2 turns (User/Assistant or Tool).
+        # Strategy Keep the System Prompt (implied) + Last 2 turns (User/Assistant or Tool).
         # Compress everything older than that.
         # This ensures the 'immediate' context (like the question just asked) is never lost.
         to_summarize = self.history[:-2] 
@@ -153,10 +154,6 @@ class MCPClient:
         # STORE THE SESSION CORRECTLY
         self.sessions[server_name] = session
 
-        # Debug print: ensure tools load
-        # resp = await session.list_tools()
-        # tools = [t.name for t in resp.tools]
-        # print(f"[Connected] {server_name}  tools = {tools}")
     
     
     async def connect_all(self):
@@ -233,7 +230,7 @@ class MCPClient:
                                 self.history.append({"role": "system", "content": error_msg})
                                 continue # Try again with error info
 
-                            print(f"   [Tool Call] {full_name} with args: {args}")
+                            print(f"   [Tool Call] {full_name} with args: {args}",file=sys.stderr)
 
                 
                             try:
@@ -253,7 +250,7 @@ class MCPClient:
                             continue
                         
                     except Exception as e:
-                        print(f"Processing Error: {e}")
+                        print(f"Processing Error: {e}",file=sys.stderr)
                 
                 
                 if not tool_found:

@@ -6,6 +6,7 @@ use std::{
     process::{Child, Command, Stdio},
     sync::{Arc, Mutex},
     thread,
+    env
 };
 
 use serde_json::json;
@@ -77,10 +78,21 @@ fn read_ready_line(engine: &PyEngine) -> Result<String, String> {
 fn main() {
     let python_executable = "python";
     // Ensure this path is correct on your machine
-    let bridge_path = "D:\\Programming\\Projects\\mcp-project\\client\\bridge.py";
+    let mut bridge_path = env::current_dir().expect("Failed to get current working directory");
+    bridge_path.push(".."); // Up to mcp-app
+    bridge_path.push(".."); // Up to mcp-project
+    bridge_path.push("client");
+    bridge_path.push("bridge.py");
+    println!("[RUST] Looking for bridge at: {:?}", bridge_path);
 
+    if !bridge_path.exists() {
+        eprintln!("CRITICAL ERROR: Could not find bridge.py!");
+        eprintln!("Expected location: {:?}", bridge_path);
+        // Don't crash immediately, let the spawn function fail so you see the error
+    }
+    let bridge_path_str = bridge_path.to_str().expect("Path is not valid UTF-8");
     // Start python
-    let engine = spawn_python_bridge(python_executable, bridge_path)
+    let engine = spawn_python_bridge(python_executable, bridge_path_str)
         .expect("Could not start python bridge");
 
     // Perform handshake

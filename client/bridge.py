@@ -21,7 +21,7 @@ async def run_bridge():
         })
         return 1
     
-    # send_json({"status": "connected"})
+    send_json({"status": "connected"})
 
     while True:
         line = sys.stdin.readline()
