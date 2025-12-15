@@ -5,7 +5,7 @@ import traceback
 from mcp_client import MCPClient
 
 def send_json(obj):
-    print(json.dumps(obj, ensure_ascii=False),flush=True)
+    print(json.dumps(obj, ensure_ascii=True),flush=True)
     sys.stdout.flush()
 
 async def run_bridge():

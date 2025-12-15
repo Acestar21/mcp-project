@@ -24,6 +24,7 @@ class MCPClient:
         self.history_file = base_dir / "history.json"
         self.history = self.load_memory()
 
+
     def load_memory(self):
         """Load history from file if it exists."""
         if self.history_file.exists():
@@ -36,6 +37,7 @@ class MCPClient:
                 print(f"[Memory] Error loading file: {e}")
         return []
     
+
     def save_memory(self):
         """Save current history to file."""
         try:
@@ -44,12 +46,14 @@ class MCPClient:
         except Exception as e:
             print(f"[Memory] Error saving file: {e}")
 
+
     def clear_memory(self):
         """Wipe the history."""
         self.history = []
         self.save_memory()
         return "Memory cleared. I have forgotten everything."
     
+
     async def summarize_memory(self):
         """Compress the history to save space."""
         # Only summarize if we actually have enough content to compress
@@ -87,6 +91,38 @@ class MCPClient:
         self.history = new_history
         self.save_memory()
         return f"Memory summarized. Reduced from {len(to_summarize) + 2} messages to {len(self.history)}."
+
+    @staticmethod
+    def extract_first_json(text: str):
+        """
+        Finds the first valid JSON object by counting braces.
+        Returns the JSON dict or None.
+        """
+        text = text.strip()
+        idx = text.find("{")
+        if idx == -1:
+            return None
+        
+        # Start scanning from the first '{'
+        balance = 0
+        start = idx
+        for i, char in enumerate(text[start:], start=start):
+            if char == "{":
+                balance += 1
+            elif char == "}":
+                balance -= 1
+                
+            # When balance hits zero, we found the closing brace for the outer object
+            if balance == 0:
+                snippet = text[start : i + 1]
+                try:
+                    return json.loads(snippet)
+                except json.JSONDecodeError:
+                    # If valid structure but invalid syntax, keep searching or fail
+                    return None
+                    
+        return None
+
 
     async def connect_to_server(self, server_name: str):
         """Connect to an MCP server
@@ -127,9 +163,8 @@ class MCPClient:
         """Connect to all servers listed in the config."""
         for server_name in self.config["servers"]:
             await self.connect_to_server(server_name)
-        
-
     
+
     async def cleanup(self):
         """Clean up resources"""
         await self.exit_stack.aclose()
@@ -157,17 +192,17 @@ class MCPClient:
             if query.strip().lower() in ["/summarize", "/sum"]:
                 return await self.summarize_memory()
     
-            if len(self.history) > 25:
+            if len(self.history) > 30:
                 await self.summarize_memory()
 
-        # 3. Add User Query to Persistent History
+
             self.history.append({"role": "user", "content": query})
             self.save_memory()
 
-            # Allow up to 15 steps to prevent infinite loops
+
             tools = await self.get_all_tools()
             for _ in range(15):
-                # 1. Ask the AI what to do next
+
                 response = self.ai.generate(self.history, tools)
                 
                 if isinstance(response, dict):
@@ -175,26 +210,24 @@ class MCPClient:
                 else:
                     reply = response.message.content
 
-                # 2. Check if the AI wants to use a tool (looks for JSON)
-                # We assume the AI complies with "Respond ONLY with JSON" for tools
-                json_match = re.search(r"\{.*\}", reply, re.DOTALL)
+
+                tool_data = self.extract_first_json(reply)
                 
                 tool_found = False
                 
-                if json_match:
+                if tool_data:
                     try:
-                        call = json.loads(json_match.group())
+                        call = tool_data
                         
                         if "tool" in call:
                             tool_found = True
                             full_name = call["tool"]
                             args = call.get("args", {})
                             
-                            # Parse "server.tool"
+
                             if "." in full_name:
                                 server_name, tool_name = full_name.split(".", 1)
                             else:
-                                # Handle error if AI forgets prefix
                                 error_msg = f"Error: Tool '{full_name}' must include server prefix (e.g., 'server.tool')"
                                 self.history.append({"role": "assistant", "content": reply})
                                 self.history.append({"role": "system", "content": error_msg})
@@ -202,42 +235,35 @@ class MCPClient:
 
                             print(f"   [Tool Call] {full_name} with args: {args}")
 
-                            # 3. Execute the tool
+                
                             try:
                                 result = await self.call_tool(server_name, tool_name, args)
-                                
-                                # Convert result to clean string
+
                                 content_str = self.print_response(result)
                             except Exception as tool_err:
                                 content_str = f"Error executing tool: {str(tool_err)}"
 
-                            # 4. Update History
-                            # We append the AI's "Request" and the System's "Result"
+
                             self.history.append({"role": "assistant", "content": reply})
                             self.history.append({
-                                "role": "user",  # <--- CHANGED FROM 'user' TO 'system'
+                                "role": "user", 
                                 "content": f"OBSERVATION [Tool Output from {full_name}]:\n{content_str}"
                             })
                             self.save_memory()
                             continue
-
-                    except json.JSONDecodeError:
-                        # Found braces but valid JSON, treat as text
-                        pass
+                        
                     except Exception as e:
                         print(f"Processing Error: {e}")
                 
-                # If we get here, either:
-                # A) No tool was found in the response
-                # B) The tool logic finished and we are breaking the loop manually (though the 'continue' handles the loop)
                 
                 if not tool_found:
-                # 5. Save Final Answer to History & Return
+                
                     self.history.append({"role": "assistant", "content": reply})
                     self.save_memory()
                     return reply
 
             return "Error: Maximum task steps exceeded (stuck in loop)."
+
 
     async def get_all_tools(self):
         """Return cleaned tool definitions for Ollama."""
@@ -253,6 +279,7 @@ class MCPClient:
                 })
 
         return tools
+
 
     @staticmethod
     def print_response(result):
