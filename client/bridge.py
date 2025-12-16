@@ -23,6 +23,13 @@ async def run_bridge():
     
     send_json({"status": "connected"})
 
+    def log_status(msg):
+        """Sends a temporary status update to the UI."""
+        send_json({
+            "type": "status",
+            "content": msg
+        })
+
     while True:
         line = sys.stdin.readline()
         if not line:
@@ -56,11 +63,11 @@ async def run_bridge():
             continue
 
         try :
-            result = await client.process(query)
+            result = await client.process(query, callback=log_status)
             if isinstance(result, (dict, list)):
-                send_json({"ok": True, "response": result})
+                send_json({"type": "response", "ok": True, "response": result})
             else:
-                send_json({"ok": True, "response": str(result)})
+                send_json({"type": "response", "ok": True, "response": str(result)})
         except Exception as e:
             send_json({"ok": False, "error": str(e), "trace": traceback.format_exc()})
 

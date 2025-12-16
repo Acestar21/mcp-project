@@ -7,6 +7,7 @@ from mcp.client.stdio import stdio_client
 from pathlib import Path
 from ai.ollama import OllamaAI
 import sys
+import asyncio
 
 class MCPClient:
     def __init__(self , config_path : Optional[str] = None):
@@ -178,7 +179,7 @@ class MCPClient:
         return response
     
 
-    async def process(self, query: str):
+    async def process(self, query: str, callback=None):
             """
             Process a user query, allowing for sequential/chained tool execution.
             """
@@ -199,6 +200,10 @@ class MCPClient:
 
             tools = await self.get_all_tools()
             for _ in range(15):
+                
+                if callback: 
+                    callback(f"🧠 Thinking... (Step {_+1}/15)")
+
 
                 response = self.ai.generate(self.history, tools)
                 
@@ -229,6 +234,11 @@ class MCPClient:
                                 self.history.append({"role": "assistant", "content": reply})
                                 self.history.append({"role": "system", "content": error_msg})
                                 continue # Try again with error info
+                            
+                            if callback: 
+                                callback(f"🛠️ calling tool: {full_name}...")
+                                await asyncio.sleep(1.0)
+
 
                             print(f"   [Tool Call] {full_name} with args: {args}",file=sys.stderr)
 

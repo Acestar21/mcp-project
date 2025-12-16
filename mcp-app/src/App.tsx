@@ -13,22 +13,32 @@ interface Message {
   content: string;
 }
 
+// NEW: Define the shape of messages coming from Python
+interface PythonEvent {
+  type?: "status" | "response";
+  content?: string;
+  ok?: boolean;
+  response?: string;
+  error?: string;
+  trace?: string;
+}
+
 export default function App() {
   const [query, setQuery] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
-  const [isLoading, setIsLoading] = useState(false); 
+  const [isLoading, setIsLoading] = useState(false);
+  // NEW: State to hold the live "Thinking..." updates
+  const [status, setStatus] = useState(""); 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Auto-scroll to bottom
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
 
   useEffect(() => {
     scrollToBottom();
-  }, [messages, isLoading]);
+  }, [messages, isLoading, status]);
 
-  // Setup Event Listener
   useEffect(() => {
     let unlistenFunction: UnlistenFn | undefined;
     let isMounted = true;
@@ -36,21 +46,34 @@ export default function App() {
     const setupListener = async () => {
       const unlisten = await listen<string>("python-output", (event) => {
         if (!isMounted) return;
-        
-        // We received a reply, stop loading
-        setIsLoading(false);
 
         const text = event.payload;
         try {
-          const parsed = JSON.parse(text);
-          if (parsed.ok) {
-            setMessages((prev) => [...prev, { role: "assistant", content: parsed.response }]);
-          } else {
-            setMessages((prev) => [...prev, { role: "error", content: JSON.stringify(parsed) }]);
+          // Parse the incoming JSON from bridge.py
+          const parsed: PythonEvent = JSON.parse(text);
+
+          // CASE 1: Status Update (The "Thinking" broadcasts)
+          // We check for type === "status" so we don't treat it as an error
+          if (parsed.type === "status" && parsed.content) {
+             setStatus(parsed.content);
+             return; // Don't stop loading, just update text
           }
+
+          // CASE 2: Final Response (The actual answer)
+          // We also support the old format (no 'type') just in case
+          if (parsed.type === "response" || parsed.ok !== undefined) {
+            setIsLoading(false); // Enable the button again
+            setStatus("");       // Clear the status text
+
+            if (parsed.ok) {
+              setMessages((prev) => [...prev, { role: "assistant", content: parsed.response || "" }]);
+            } else {
+              setMessages((prev) => [...prev, { role: "error", content: JSON.stringify(parsed) }]);
+            }
+          }
+
         } catch {
-          // Fallback for non-JSON output
-          setMessages((prev) => [...prev, { role: "system", content: text }]);
+          // Fallback for non-JSON output (should be rare now)
         }
       });
 
@@ -71,21 +94,21 @@ export default function App() {
     if (!query.trim() || isLoading) return;
 
     const currentQuery = query;
-    // Optimistic UI update
     setMessages((prev) => [...prev, { role: "user", content: currentQuery }]);
     setQuery("");
-    setIsLoading(true); // Start loading
+    setIsLoading(true);
+    setStatus("Starting..."); // Initial status
 
     try {
       await invoke("send_to_python", { query: currentQuery });
     } catch (error) {
       setMessages((prev) => [...prev, { role: "error", content: `Failed to send: ${error}` }]);
       setIsLoading(false);
+      setStatus("");
     }
   }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    // Send on Enter (but Shift+Enter allows new lines)
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       sendQuery();
@@ -104,7 +127,7 @@ export default function App() {
           borderRadius: "8px",
           padding: "15px",
           marginBottom: "15px",
-          backgroundColor: "#1e1e1e", // Dark background for code readability
+          backgroundColor: "#1e1e1e",
           display: "flex",
           flexDirection: "column",
           gap: "15px",
@@ -123,7 +146,7 @@ export default function App() {
                   ? "#007bff"
                   : msg.role === "error"
                   ? "#ff4444"
-                  : "#2d2d2d", // Dark gray for assistant
+                  : "#2d2d2d",
               color: "white",
               boxShadow: "0 2px 4px rgba(0,0,0,0.2)"
             }}
@@ -132,12 +155,11 @@ export default function App() {
               {msg.role.toUpperCase()}
             </div>
             
-            {/* THIS IS THE FIX BELOW */}
-            <Markdown
+<Markdown
               remarkPlugins={[remarkGfm]}
               components={{
                 code(props) {
-                  // Destructure ref out so it doesn't get passed to SyntaxHighlighter
+                  // FIX: Destructure 'ref' here so it is NOT included in 'rest'
                   const { children, className, node, ref, ...rest } = props;
                   const match = /language-(\w+)/.exec(className || "");
                   return match ? (
@@ -158,21 +180,28 @@ export default function App() {
             >
               {msg.content}
             </Markdown>
-
           </div>
         ))}
         
-        {/* Loading Indicator */}
+        {/* NEW STATUS INDICATOR (The Green Text) */}
         {isLoading && (
-            <div style={{ alignSelf: 'flex-start', color: '#aaa', fontStyle: 'italic', marginLeft: '10px' }}>
-                Assistant is thinking...
+            <div style={{ 
+                alignSelf: 'flex-start', 
+                color: '#00ff88',  // Matrix green
+                fontFamily: 'monospace',
+                fontSize: '0.9em',
+                padding: '10px',
+                borderLeft: '2px solid #00ff88',
+                backgroundColor: 'rgba(0, 255, 136, 0.1)',
+                marginLeft: '10px' 
+            }}>
+                {status || "Assistant is thinking..."}
             </div>
         )}
         <div ref={messagesEndRef} />
       </div>
 
       <div style={{ display: "flex", gap: "10px", alignItems: "flex-end" }}>
-        {/* Auto-Resizing Input */}
         <TextareaAutosize
           minRows={1}
           maxRows={6}
