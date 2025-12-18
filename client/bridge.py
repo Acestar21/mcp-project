@@ -23,11 +23,13 @@ async def run_bridge():
     
     send_json({"status": "connected"})
 
-    def log_status(msg):
-        """Sends a temporary status update to the UI."""
+    def handle_event(event):
+        """Standardized event handler."""
+        # Wrap raw events in the format UI expects
+        # or pass them through directly if UI is updated.
         send_json({
-            "type": "status",
-            "content": msg
+            "type": "agent_event", 
+            "content": event # Contains request_id, type, timestamp
         })
 
     while True:
@@ -63,7 +65,7 @@ async def run_bridge():
             continue
 
         try :
-            result = await client.process(query, callback=log_status)
+            result = await client.process(query, event_handler=handle_event)
             if isinstance(result, (dict, list)):
                 send_json({"type": "response", "ok": True, "response": result})
             else:
