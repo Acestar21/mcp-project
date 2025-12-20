@@ -3,7 +3,8 @@ import { eventReducer , initialEventState } from './eventStore'
 import { ChatView } from './component/ChatWindow';
 import { listen } from "@tauri-apps/api/event"
 import { invoke } from '@tauri-apps/api/core';
-
+import { Header } from './component/Header';
+import { DebugSidebar } from './component/DebugSidebar';
 
 
 
@@ -13,6 +14,7 @@ function App() {
     eventReducer,
     initialEventState
   )
+  const [showDebug, setShowDebug] = useState(false)
 
   useEffect(() => {
     const unlistenPromise = listen<string>("agent_event", (event) => {
@@ -75,33 +77,45 @@ function App() {
   }
   useEffect(() => { console.log("EVENTS:", state.events) }, [state.events])
 
-return (
-  <div style={{ display: "flex", flexDirection: "column", height: "100vh" }}>
-    {/* Center chat */}
-    <div style={{ flex: 1, overflowY: "auto", borderBottom: "1px solid #ddd" }}>
-      <ChatView events={state.events} />
-    </div>
+  return (
+    <div className="app-root">
+      <div className={`main-column ${showDebug ? "debug-open" : ""}`}>
+        <Header events={state.events} />
 
-    {/* Footer */}
-    <div style={{ padding: 12 }}>
-      <textarea
-        value={input}
-        onChange={(e) => setInput(e.target.value)}
-        onKeyDown={onKeyDown}
-        disabled={isBusy}
-        placeholder={isBusy ? "Agent is busy…" : "Type a message"}
-        rows={3}
-        style={{ width: "100%" }}
-      />
-      <button
-        onClick={sendQuery}
-        disabled={isBusy || !input.trim()}
-      >
-        {isBusy ? "Working…" : "Send"}
-      </button>
+        <div className="chat-area">
+          <ChatView events={state.events} />
+        </div>
+
+        <div className="footer">
+          <textarea
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={onKeyDown}
+            disabled={isBusy}
+            placeholder={isBusy ? "Agent is busy…" : "Type a message"}
+            rows={3}
+          />
+
+          <div style={{ display: "flex", justifyContent: "space-between" }}>
+            <button
+              onClick={sendQuery}
+              disabled={isBusy || !input.trim()}
+            >
+              {isBusy ? "Working…" : "Send"}
+            </button>
+
+            <button onClick={() => setShowDebug(v => !v)}>
+              ☰
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className={`debug-sidebar-container ${showDebug ? "open" : ""}`}>
+        <DebugSidebar events={state.events} visible={showDebug} />
+      </div>
     </div>
-  </div>
-)
+  )
 }
 
 export default App
