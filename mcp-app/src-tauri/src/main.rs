@@ -121,7 +121,7 @@ fn main() {
                         println!("[PYTHON STREAM] {}", text);
 
                         // Emit event to frontend React
-                        let _ = app_handle.emit("python-output", text);
+                        let _ = app_handle.emit("agent_event", text);
                     }
                 }
             });

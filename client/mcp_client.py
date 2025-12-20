@@ -83,7 +83,6 @@ class MCPClient:
         return "UNKNOWN"
 
 
-
     def filter_tools(self, intent: str) -> list[dict]:
         """Return only tools allowed for the specific intent."""
         allowed = []
@@ -351,6 +350,9 @@ class MCPClient:
                             self.history.append({"role": "assistant", "content": reply})
                             self.history.append({"role": "user", "content": f"SYSTEM: {block_msg}"})
                             self.save_memory()
+                            self._emit(event_handler, "assistant_message", request_id, {
+                                "content": block_msg
+                            })
                             self._emit(event_handler, "request_completed", request_id)
                             return block_msg
                         
@@ -411,7 +413,9 @@ class MCPClient:
                 # No tool called, we are done
                 self.history.append({"role": "assistant", "content": reply})
                 self.save_memory()
-                
+                self._emit(event_handler, "assistant_message", request_id, {
+                    "content": reply
+                })
                 self._emit(event_handler, "request_completed", request_id, {
                     "result_length": len(reply)
                 })
