@@ -9,10 +9,8 @@ use std::{
     env
 };
 
-use serde_json::json;
 use tauri::{Emitter, State};
 
-/// Allow cloning PyEngine by cloning its Arc fields.
 #[derive(Clone)]
 struct PyEngine {
     _child: Arc<Mutex<Child>>,
@@ -20,35 +18,43 @@ struct PyEngine {
     stdout: Arc<Mutex<BufReader<std::process::ChildStdout>>>,
 }
 
-/// Tauri command — sends a query to Python.
-/// IMPORTANT: This only WRITES. It does not READ (to avoid deadlocks).
-/// The background thread handles reading and emitting events.
-#[tauri::command]
-fn send_to_python(state: State<PyEngine>, query: String) -> Result<(), String> {
-    let payload = json!({ "query": query }).to_string() + "\n";
+/// Read exactly one READY line from Python
+fn wait_for_ready(engine: &PyEngine) -> Result<(), String> {
+    let mut line = String::new();
+    let mut stdout = engine.stdout.lock().unwrap();
 
-    {
-        let mut stdin = state
-            .stdin
-            .lock()
-            .map_err(|e| format!("stdin lock error: {}", e))?;
-        stdin
-            .write_all(payload.as_bytes())
-            .map_err(|e| format!("stdin write error: {}", e))?;
-        stdin.flush().map_err(|e| format!("stdin flush error: {}", e))?;
+    stdout.read_line(&mut line).map_err(|e| e.to_string())?;
+
+    if line.trim() != "READY" {
+        return Err(format!("Expected READY, got: {}", line));
     }
 
+    println!("[RUST] Python bridge READY");
     Ok(())
 }
 
-/// Launches python bridge.py and returns engine.
+/// Send raw JSON to Python (write-only)
+fn send_raw_json(state: &PyEngine, json: &str) -> Result<(), String> {
+    let mut stdin = state.stdin.lock().unwrap();
+    stdin.write_all(json.as_bytes()).map_err(|e| e.to_string())?;
+    stdin.write_all(b"\n").map_err(|e| e.to_string())?;
+    stdin.flush().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn send_to_python(state: State<PyEngine>, query: String) -> Result<(), String> {
+    let payload = format!(r#"{{"query":"{}"}}"#, query);
+    send_raw_json(&state, &payload)
+}
+
 fn spawn_python_bridge(python_exec: &str, bridge_path: &str) -> Result<PyEngine, String> {
     let mut child = Command::new(python_exec)
         .arg("-u")
         .arg(bridge_path)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::inherit()) // Show python errors in Tauri console
+        .stderr(Stdio::inherit())
         .spawn()
         .map_err(|e| format!("Failed to spawn python bridge: {}", e))?;
 
@@ -62,66 +68,48 @@ fn spawn_python_bridge(python_exec: &str, bridge_path: &str) -> Result<PyEngine,
     })
 }
 
-/// Read Python's initial handshake line
-fn read_ready_line(engine: &PyEngine) -> Result<String, String> {
-    let mut line = String::new();
-    let mut stdout = engine
-        .stdout
-        .lock()
-        .map_err(|e| format!("stdout lock error: {}", e))?;
-    stdout
-        .read_line(&mut line)
-        .map_err(|e| format!("read_line error: {}", e))?;
-    Ok(line)
-}
-
 fn main() {
     let python_executable = "python";
-    // Ensure this path is correct on your machine
-    let mut bridge_path = env::current_dir().expect("Failed to get current working directory");
-    bridge_path.push(".."); // Up to mcp-app
-    bridge_path.push(".."); // Up to mcp-project
+
+    let mut bridge_path = env::current_dir().unwrap();
+    bridge_path.push("..");
+    bridge_path.push("..");
     bridge_path.push("client");
     bridge_path.push("bridge.py");
+
     println!("[RUST] Looking for bridge at: {:?}", bridge_path);
 
-    if !bridge_path.exists() {
-        eprintln!("CRITICAL ERROR: Could not find bridge.py!");
-        eprintln!("Expected location: {:?}", bridge_path);
-        // Don't crash immediately, let the spawn function fail so you see the error
-    }
-    let bridge_path_str = bridge_path.to_str().expect("Path is not valid UTF-8");
-    // Start python
-    let engine = spawn_python_bridge(python_executable, bridge_path_str)
+    let engine = spawn_python_bridge(python_executable, bridge_path.to_str().unwrap())
         .expect("Could not start python bridge");
 
-    // Perform handshake
-    match read_ready_line(&engine) {
-        Ok(line) => println!("Python bridge handshake: {}", line.trim()),
-        Err(e) => eprintln!("Handshake failed: {}", e),
-    }
+    // 🔑 READY gate (nothing JSON is consumed here)
+    wait_for_ready(&engine).expect("Python bridge did not send READY");
 
     let engine_state = engine.clone();
 
     tauri::Builder::default()
         .manage(engine_state.clone())
         .setup(move |app| {
-            // Clone the app handle so it can be moved to the thread safely
             let app_handle = app.handle().clone();
             let engine_for_thread = engine_state.clone();
 
-            // Stream python output continuously in the background
             thread::spawn(move || {
                 let mut stdout = engine_for_thread.stdout.lock().unwrap();
 
-                // Iterate over a mutable borrow `(&mut *stdout)`
-                // This prevents moving the internal BufReader out of the MutexGuard
                 for line in (&mut *stdout).lines() {
                     if let Ok(text) = line {
                         println!("[PYTHON STREAM] {}", text);
 
-                        // Emit event to frontend React
-                        let _ = app_handle.emit("agent_event", text);
+                        if let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) {
+                            match value.get("type").and_then(|t| t.as_str()) {
+                                Some("capabilities") => {
+                                    let _ = app_handle.emit("capabilities", value);
+                                }
+                                _ => {
+                                    let _ = app_handle.emit("agent_event", value);
+                                }
+                            }
+                        }
                     }
                 }
             });

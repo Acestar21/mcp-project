@@ -117,6 +117,43 @@ class MCPClient:
         handler(payload)
 
 
+    def emit_capabilities(self, handler: Callable[[dict], None]):
+        if not handler:
+            return
+
+        servers = {}
+
+        for server_name, tools in self.tool_cache.items():
+            servers[server_name] = {
+                "tool_count": len(tools),
+                "tools": [
+                    t["name"].split(".", 1)[1]  # remove server prefix
+                    for t in tools
+                ],
+            }
+
+        handler({
+            "type": "capabilities",
+            "servers": servers,
+            "timestamp": time.time(),
+        })
+
+
+    # def get_capabilities_snapshot(self):
+    #     servers = {}
+
+    #     for server_name, tools in self.tool_cache.items():
+    #         servers[server_name] = {
+    #             "tool_count": len(tools),
+    #             "tools": [
+    #                 t["name"].split(".", 1)[1]
+    #                 for t in tools
+    #             ],
+    #         }
+
+    #     return servers
+
+
     async def summarize_memory(self):
         """Compress the history to save space."""
         # Only summarize if we actually have enough content to compress
@@ -231,11 +268,13 @@ class MCPClient:
             })
     
     
-    async def connect_all(self):
-        """Connect to all servers listed in the config."""
+    async def connect_all(self, event_handler=None):
         for server_name in self.config["servers"]:
             await self.connect_to_server(server_name)
-    
+
+        self.emit_capabilities(event_handler)
+
+
 
     async def cleanup(self):
         """Clean up resources"""

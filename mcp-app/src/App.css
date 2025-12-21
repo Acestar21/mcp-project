@@ -9,11 +9,14 @@
   flex: 1;
   display: flex;
   flex-direction: column;
-  transition: margin-right 0.25s ease;
+  transition: margin-left 0.25s ease, margin-right 0.25s ease;
 }
 
 .main-column.debug-open {
   margin-right: 320px;
+}
+.main-column.tools-open {
+  margin-left: 260px;
 }
 
 /* Chat scroll area */
@@ -44,3 +47,26 @@
 .debug-sidebar-container.open {
   transform: translateX(0);
 }
+
+/* LEFT TOOLS SIDEBAR */
+.tools-sidebar-container {
+  width: 260px;
+  background: #f6f6f6;
+  border-right: 1px solid #ddd;
+
+  position: fixed;
+  left: 0;
+  top: 0;
+  bottom: 0;
+
+  transform: translateX(-100%);
+  transition: transform 0.25s ease;
+
+  overflow-y: auto;
+  z-index: 10;
+}
+
+.tools-sidebar-container.open {
+  transform: translateX(0);
+}
+

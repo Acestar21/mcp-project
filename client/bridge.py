@@ -10,9 +10,16 @@ def send_json(obj):
 
 async def run_bridge():
     client = MCPClient()
-    try:
-        await client.connect_all()
-    
+
+    def handle_event(event :dict):
+        send_json(event)
+    # bridge.py
+
+    print("READY", flush=True)
+
+    try:    
+        await client.connect_all(event_handler=handle_event)
+
     except Exception as e:
         send_json({
             "error": "Failed to connect to MCP servers",
@@ -23,14 +30,6 @@ async def run_bridge():
     
     send_json({"status": "connected"})
 
-    def handle_event(event):
-        """Standardized event handler."""
-        # Wrap raw events in the format UI expects
-        # or pass them through directly if UI is updated.
-        send_json({
-            "type": "agent_event", 
-            "content": event # Contains request_id, type, timestamp
-        })
 
     while True:
         line = sys.stdin.readline()
