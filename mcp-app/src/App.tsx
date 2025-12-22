@@ -6,7 +6,7 @@ import { invoke } from "@tauri-apps/api/core"
 import { Header } from "./component/Header"
 import { DebugSidebar } from "./component/DebugSidebar"
 import { ToolsSidebar } from "./component/ToolSidebar"
-/* ---------------- Types ---------------- */
+
 
 type Capabilities = {
   [serverName: string]: {
@@ -20,7 +20,6 @@ type CapabilitiesPayload = {
   servers: Capabilities
 }
 
-/* ---------------- App ---------------- */
 
 function App() {
   const [capabilities, setCapabilities] = useState<Capabilities | null>(null)
@@ -33,7 +32,7 @@ function App() {
 
   const [showDebug, setShowDebug] = useState(false)
 
-  /* -------- Agent Events -------- */
+
   useEffect(() => {
     const unlistenPromise = listen<any>("agent_event", (event) => {
       const data = event.payload
@@ -52,7 +51,7 @@ function App() {
     }
   }, [])
 
-  /* -------- Capabilities -------- */
+
   useEffect(() => {
     const unlistenPromise = listen<CapabilitiesPayload>(
       "capabilities",
@@ -67,7 +66,6 @@ function App() {
     }
   }, [])
 
-  /* -------- Busy State -------- */
   const getActiveRequestId = () => {
     for (let i = state.events.length - 1; i >= 0; i--) {
       const e = state.events[i]
@@ -83,7 +81,7 @@ function App() {
 
   const isBusy = getActiveRequestId() !== null
 
-  /* -------- Input -------- */
+
   const [input, setInput] = useState("")
 
   const sendQuery = async () => {
@@ -108,7 +106,7 @@ function App() {
     console.log("CAPABILITIES STATE:", capabilities)
   }, [capabilities])
 
-  /* -------- Render -------- */
+
   return (
     <div className="app-root">
         <div className={`tools-sidebar-container ${showTools ? "open" : ""}`}>

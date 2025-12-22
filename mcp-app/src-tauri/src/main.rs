@@ -1,4 +1,3 @@
-// src-tauri/src/main.rs
 #![cfg_attr(all(not(debug_assertions), target_os = "windows"), windows_subsystem = "windows")]
 
 use std::{
@@ -6,10 +5,9 @@ use std::{
     process::{Child, Command, Stdio},
     sync::{Arc, Mutex},
     thread,
-    env
 };
 
-use tauri::{Emitter, State};
+use tauri::{Emitter, Manager, State};
 
 #[derive(Clone)]
 struct PyEngine {
@@ -18,7 +16,60 @@ struct PyEngine {
     stdout: Arc<Mutex<BufReader<std::process::ChildStdout>>>,
 }
 
-/// Read exactly one READY line from Python
+/* ---------------- Python command selection ---------------- */
+
+fn python_command(app: &tauri::AppHandle) -> (String, Vec<String>) {
+    if cfg!(debug_assertions) {
+        // DEV → run python bridge.py
+        let mut path = std::env::current_dir().unwrap();
+        path.push("..");
+        path.push("..");
+        path.push("client");
+        path.push("bridge.py");
+
+        (
+            "python".to_string(),
+            vec!["-u".into(), path.to_string_lossy().into()],
+        )
+    } else {
+        // PROD → run bundled python-agent.exe
+        let resource_dir = app
+            .path()
+            .resource_dir()
+            .expect("resource_dir not found");
+
+        let exe = resource_dir.join("python").join("python-agent.exe");
+        println!("[RUST] Using python agent at: {:?}", exe);
+
+        (exe.to_string_lossy().into(), vec![])
+    }
+}
+
+/* ---------------- Spawn Python ---------------- */
+
+fn spawn_python_bridge(app: &tauri::AppHandle) -> Result<PyEngine, String> {
+    let (command, args) = python_command(app);
+
+    let mut child = Command::new(command)
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .map_err(|e| e.to_string())?;
+
+    let stdin = child.stdin.take().ok_or("stdin missing")?;
+    let stdout = child.stdout.take().ok_or("stdout missing")?;
+
+    Ok(PyEngine {
+        _child: Arc::new(Mutex::new(child)),
+        stdin: Arc::new(Mutex::new(stdin)),
+        stdout: Arc::new(Mutex::new(BufReader::new(stdout))),
+    })
+}
+
+/* ---------------- READY handshake ---------------- */
+
 fn wait_for_ready(engine: &PyEngine) -> Result<(), String> {
     let mut line = String::new();
     let mut stdout = engine.stdout.lock().unwrap();
@@ -33,9 +84,10 @@ fn wait_for_ready(engine: &PyEngine) -> Result<(), String> {
     Ok(())
 }
 
-/// Send raw JSON to Python (write-only)
-fn send_raw_json(state: &PyEngine, json: &str) -> Result<(), String> {
-    let mut stdin = state.stdin.lock().unwrap();
+/* ---------------- IPC write-only ---------------- */
+
+fn send_raw_json(engine: &PyEngine, json: &str) -> Result<(), String> {
+    let mut stdin = engine.stdin.lock().unwrap();
     stdin.write_all(json.as_bytes()).map_err(|e| e.to_string())?;
     stdin.write_all(b"\n").map_err(|e| e.to_string())?;
     stdin.flush().map_err(|e| e.to_string())?;
@@ -48,65 +100,52 @@ fn send_to_python(state: State<PyEngine>, query: String) -> Result<(), String> {
     send_raw_json(&state, &payload)
 }
 
-fn spawn_python_bridge(python_exec: &str, bridge_path: &str) -> Result<PyEngine, String> {
-    let mut child = Command::new(python_exec)
-        .arg("-u")
-        .arg(bridge_path)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
-        .spawn()
-        .map_err(|e| format!("Failed to spawn python bridge: {}", e))?;
-
-    let child_stdin = child.stdin.take().ok_or("Failed to open child stdin")?;
-    let child_stdout = child.stdout.take().ok_or("Failed to open child stdout")?;
-
-    Ok(PyEngine {
-        _child: Arc::new(Mutex::new(child)),
-        stdin: Arc::new(Mutex::new(child_stdin)),
-        stdout: Arc::new(Mutex::new(BufReader::new(child_stdout))),
-    })
+#[tauri::command]
+fn get_config_dir(app: tauri::AppHandle) -> String {
+    app.path()
+        .app_config_dir()
+        .unwrap()
+        .to_string_lossy()
+        .to_string()
 }
 
+/* ---------------- App entry ---------------- */
+
 fn main() {
-    let python_executable = "python";
-
-    let mut bridge_path = env::current_dir().unwrap();
-    bridge_path.push("..");
-    bridge_path.push("..");
-    bridge_path.push("client");
-    bridge_path.push("bridge.py");
-
-    println!("[RUST] Looking for bridge at: {:?}", bridge_path);
-
-    let engine = spawn_python_bridge(python_executable, bridge_path.to_str().unwrap())
-        .expect("Could not start python bridge");
-
-    // 🔑 READY gate (nothing JSON is consumed here)
-    wait_for_ready(&engine).expect("Python bridge did not send READY");
-
-    let engine_state = engine.clone();
-
     tauri::Builder::default()
-        .manage(engine_state.clone())
-        .setup(move |app| {
-            let app_handle = app.handle().clone();
-            let engine_for_thread = engine_state.clone();
+        .setup(|app| {
+            let engine = spawn_python_bridge(&app.handle())
+                .expect("Failed to start python bridge");
 
+            // READY gate
+            wait_for_ready(&engine)
+                .expect("Python bridge did not send READY");
+
+            let app_handle = app.handle().clone();
+            let engine_clone = engine.clone();
+
+            // Store engine in Tauri state
+            app.manage(engine);
+
+            // Background reader thread
             thread::spawn(move || {
-                let mut stdout = engine_for_thread.stdout.lock().unwrap();
+                let mut stdout = engine_clone.stdout.lock().unwrap();
 
                 for line in (&mut *stdout).lines() {
                     if let Ok(text) = line {
                         println!("[PYTHON STREAM] {}", text);
 
                         if let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) {
-                            match value.get("type").and_then(|t| t.as_str()) {
-                                Some("capabilities") => {
-                                    let _ = app_handle.emit("capabilities", value);
-                                }
-                                _ => {
-                                    let _ = app_handle.emit("agent_event", value);
+                            if let Some(event_type) =
+                                value.get("type").and_then(|v| v.as_str())
+                            {
+                                match event_type {
+                                    "capabilities" => {
+                                        let _ = app_handle.emit("capabilities", value);
+                                    }
+                                    _ => {
+                                        let _ = app_handle.emit("agent_event", value);
+                                    }
                                 }
                             }
                         }

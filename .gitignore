@@ -1,0 +1,13 @@
+python-agent.spec 
+.venv
+browser_server/screenshots/
+__pycache__/
+build/
+dist/
+.env 
+bridge.spec
+history.json
+file-ops_server/sandbox/
+.vscode/
+node_modules/
+target/

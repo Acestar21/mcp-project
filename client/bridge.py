@@ -10,12 +10,12 @@ def send_json(obj):
 
 async def run_bridge():
     client = MCPClient()
+    print("READY", flush=True)
 
     def handle_event(event :dict):
         send_json(event)
     # bridge.py
 
-    print("READY", flush=True)
 
     try:    
         await client.connect_all(event_handler=handle_event)

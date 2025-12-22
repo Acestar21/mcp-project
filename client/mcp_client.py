@@ -11,23 +11,49 @@ import asyncio
 import uuid
 import time
 
+def get_client_root() -> Path:
+    """
+    DEV  → project-root/client
+    PROD → PyInstaller bundle root (_MEIPASS)
+    """
+    if getattr(sys, "frozen", False):
+        return Path(sys._MEIPASS)
+    else:
+        return Path(__file__).resolve().parent
+
+
+def get_project_root() -> Path:
+    """
+    DEV  → project root
+    PROD → PyInstaller bundle root (_MEIPASS)
+    """
+    if getattr(sys, "frozen", False):
+        return Path(sys._MEIPASS)
+    else:
+        return Path(__file__).resolve().parent.parent
+
 class MCPClient:
     def __init__(self , config_path : Optional[str] = None):
 
-        base_dir = Path(__file__).parent
+        client_dir = get_client_root()
+
         if config_path is None:
-            config_path = base_dir / "config" / "server.json"
-        with open(config_path , 'r') as f:
+            config_path = client_dir / "config" / "server.json"
+
+        if not config_path.exists():
+            raise RuntimeError(f"server.json not found at {config_path}")
+
+        with open(config_path, "r", encoding="utf-8") as f:
             self.config = json.load(f)
+            
         self.ai = OllamaAI()
         self.sessions: Dict[str,ClientSession] = {}
         self.tool_cache: Dict[str, list[Any]] = {}
 
         self.exit_stack = AsyncExitStack()
-        self.project_root = base_dir.parent
 
 
-        self.history_file = base_dir / "history.json"
+        self.history_file = client_dir / "history.json"
         self.history = self.load_memory()
 
 
@@ -232,9 +258,10 @@ class MCPClient:
             server_name: Name of the server defined in servers.json
         """
         cfg = self.config["servers"][server_name]
-        script_path = self.project_root / cfg["args"][0]
-        
-        # Reconstruct args with the absolute path
+        project_root = get_project_root()
+        script_path = project_root / cfg["args"][0]
+        script_path = script_path.resolve()
+
         final_args = [str(script_path)] + cfg["args"][1:]
 
 
