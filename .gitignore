@@ -1,4 +1,5 @@
 python-agent.spec 
+python-agent.exe
 .venv
 browser_server/screenshots/
 __pycache__/
