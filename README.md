@@ -103,6 +103,10 @@ Launch the app.
 
 Type a request like: "Create a file named plan.txt in the data folder and write a summary of the latest AI news."
 
+## Demo Video
+
+https://github.com/user-attachments/assets/f446498a-845a-4564-ad5d-5854bfb3fa99
+
 ## ⚠️ Operational Limitations
 Context Window: The bridge blindly dumps file contents into the context. Reading large files will crash the context window of smaller local models.
 
